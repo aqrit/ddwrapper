@@ -1,5 +1,6 @@
 #include "header.h"
 
+
 namespace dd
 {
 	struct XVTBL
@@ -98,11 +99,8 @@ namespace dd
 	HRESULT __stdcall CreateSurface( WRAP* This, LPDDSURFACEDESC lpDDSurfaceDesc, LPDIRECTDRAWSURFACE *lplpDDSurface, IUnknown *pUnkOuter ) 
 	{ 
 		PROLOGUE;
-		HRESULT hResult =  This->dd1->lpVtbl->CreateSurface( This->dd1, lpDDSurfaceDesc, lplpDDSurface, pUnkOuter );
-		if( SUCCEEDED( hResult ) )
-		{
-			Wrap( This->dd_parent, dd_to_dds_vtbl( This ), (void**)lplpDDSurface );
-		}
+		HRESULT hResult = CreateSurface_pst( This, lpDDSurfaceDesc, lplpDDSurface, pUnkOuter );
+	//	if( SUCCEEDED( hResult ) ) Wrap( This->dd_parent, dd_to_dds_vtbl( This ), (void**)lplpDDSurface );
 		EPILOGUE( hResult );
 	}
 
@@ -151,7 +149,7 @@ namespace dd
     HRESULT __stdcall GetDisplayMode( WRAP* This, LPDDSURFACEDESC lpDDSurfaceDesc ) 
 	{ 
 		PROLOGUE;
-		HRESULT hResult = This->dd1->lpVtbl->GetDisplayMode( This->dd1, lpDDSurfaceDesc );
+		HRESULT hResult = GetDisplayMode_pst( This->dd1, lpDDSurfaceDesc );
 		EPILOGUE( hResult );
 	}
 
@@ -208,7 +206,7 @@ namespace dd
 	HRESULT __stdcall SetCooperativeLevel( WRAP* This, HWND hWnd, DWORD dwFlags ) 
 	{ 		
 		PROLOGUE;
-		HRESULT hResult = This->dd1->lpVtbl->SetCooperativeLevel( This->dd1, hWnd, dwFlags );
+		HRESULT hResult = SetCooperativeLevel_pst( This->dd1, hWnd, dwFlags );
 		EPILOGUE( hResult );
 	}
 
@@ -216,7 +214,7 @@ namespace dd
     HRESULT __stdcall SetDisplayMode1( WRAP* This, DWORD dwWidth, DWORD dwHeight, DWORD dwBPP ) 
 	{ 
 		PROLOGUE;
-		HRESULT hResult = This->dd1->lpVtbl->SetDisplayMode( This->dd1, dwWidth, dwHeight, dwBPP );
+		HRESULT hResult = SetDisplayMode_pst( This->dd1, dwWidth, dwHeight, dwBPP );
 		EPILOGUE( hResult );
 	}
 	HRESULT __stdcall SetDisplayMode2( WRAP* This, DWORD dwWidth, DWORD dwHeight, DWORD dwBPP, DWORD dwRefreshRate, DWORD dwFlags ) 
