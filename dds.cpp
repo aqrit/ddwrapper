@@ -77,7 +77,7 @@ namespace dds
 	ULONG __stdcall Release( WRAP* This ) 
 	{ 	
 		PROLOGUE;
-		ULONG dwCount = WrapRelease( This );
+		ULONG dwCount = Release_dds_pst( This );
 		EPILOGUE( dwCount );
 	}
 
@@ -103,6 +103,7 @@ namespace dds
 	HRESULT __stdcall Blt( WRAP* This, LPRECT lpDestRect, LPDIRECTDRAWSURFACE lpDDSrcSurface, LPRECT lpSrcRect, DWORD dwFlags, LPDDBLTFX lpDDBltFx )
 	{ 		
 		PROLOGUE;
+		HRESULT hResult;
 
 		// note:
 		// dwDDROP is ignored as "no such ROPs are currently defined"
@@ -132,8 +133,8 @@ namespace dds
 			lpDDSrcSurface = GetInnerInterface( lpDDSrcSurface );
 		}
 
-		//
-		HRESULT hResult = This->dds1->lpVtbl->Blt( This->dds1, lpDestRect, lpDDSrcSurface, lpSrcRect, dwFlags, lpDDBltFx ); 
+		hResult = Blt_pst( This, lpDestRect, lpDDSrcSurface, lpSrcRect, dwFlags, lpDDBltFx ); 
+
 		EPILOGUE( hResult );
 	}
 
@@ -147,7 +148,7 @@ namespace dds
 	HRESULT __stdcall BltFast( WRAP* This, DWORD dwX, DWORD dwY, LPDIRECTDRAWSURFACE lpDDSrcSurface, LPRECT lpSrcRect, DWORD dwTrans ) 
 	{
 		PROLOGUE;
-		HRESULT hResult = This->dds1->lpVtbl->BltFast( This->dds1, dwX, dwY, GetInnerInterface( lpDDSrcSurface ), lpSrcRect, dwTrans );
+		HRESULT hResult = BltFast_pst( This, dwX, dwY, (WRAP*) lpDDSrcSurface, lpSrcRect, dwTrans );
 		EPILOGUE( hResult );  
 	}
 
@@ -192,7 +193,7 @@ namespace dds
 	HRESULT __stdcall Flip( WRAP* This, LPDIRECTDRAWSURFACE lpDDSurfaceTargetOverride, DWORD dwFlags ) 
 	{ 
 		PROLOGUE;
-		HRESULT hResult = This->dds1->lpVtbl->Flip( This->dds1, GetInnerInterface( lpDDSurfaceTargetOverride ), dwFlags );
+		HRESULT hResult = Flip_pst( This->dds1, GetInnerInterface( lpDDSurfaceTargetOverride ), dwFlags );
 		EPILOGUE( hResult ); 
 	}
 

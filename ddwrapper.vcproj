@@ -60,6 +60,7 @@
 			/>
 			<Tool
 				Name="VCLinkerTool"
+				AdditionalDependencies="opengl32.lib"
 				LinkIncremental="2"
 				GenerateDebugInformation="true"
 				SubSystem="2"
@@ -113,15 +114,19 @@
 			<Tool
 				Name="VCCLCompilerTool"
 				Optimization="2"
+				InlineFunctionExpansion="1"
 				EnableIntrinsicFunctions="true"
-				AdditionalIncludeDirectories="D:\LIBS\boost_1_53_0"
+				FavorSizeOrSpeed="1"
+				OmitFramePointers="true"
+				AdditionalIncludeDirectories=""
 				PreprocessorDefinitions="WIN32;NDEBUG;_WINDOWS;_USRDLL;DDWRAPPER_EXPORTS"
 				StringPooling="true"
 				ExceptionHandling="0"
 				RuntimeLibrary="2"
 				BufferSecurityCheck="false"
 				EnableFunctionLevelLinking="false"
-				FloatingPointModel="2"
+				FloatingPointModel="1"
+				RuntimeTypeInfo="false"
 				UsePrecompiledHeader="0"
 				WarningLevel="3"
 				DebugInformationFormat="3"
@@ -137,6 +142,7 @@
 			/>
 			<Tool
 				Name="VCLinkerTool"
+				AdditionalDependencies="opengl32.lib"
 				OutputFile="$(OutDir)\ddraw.dll"
 				LinkIncremental="1"
 				GenerateManifest="false"
@@ -146,6 +152,8 @@
 				SubSystem="2"
 				OptimizeReferences="2"
 				EnableCOMDATFolding="2"
+				RandomizedBaseAddress="1"
+				FixedBaseAddress="1"
 				TargetMachine="1"
 			/>
 			<Tool
@@ -199,6 +207,10 @@
 			>
 		</File>
 		<File
+			RelativePath=".\drawfog.cpp"
+			>
+		</File>
+		<File
 			RelativePath=".\exports.def"
 			>
 		</File>
@@ -211,7 +223,23 @@
 			>
 		</File>
 		<File
+			RelativePath=".\log.cpp"
+			>
+			<FileConfiguration
+				Name="Release|Win32"
+				ExcludedFromBuild="true"
+				>
+				<Tool
+					Name="VCCLCompilerTool"
+				/>
+			</FileConfiguration>
+		</File>
+		<File
 			RelativePath=".\palette.cpp"
+			>
+		</File>
+		<File
+			RelativePath=".\torment.cpp"
 			>
 		</File>
 		<File
