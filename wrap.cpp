@@ -35,20 +35,40 @@ const void* iid_to_vtbl( const GUID& riid )
 	return xVtbl;
 }
 
+
 // thread should already have lock
 SLOT* AllocSlot()
 {
+	static void* base = NULL;
+	static unsigned int page = -1;
+
+	bool bResult = false;
+	
 	if( freelist == NULL ) // if out of slots
 	{
-		freelist = (SLOT*) VirtualAlloc( NULL, sSysInfo.dwAllocationGranularity, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
-		if( freelist != NULL )
-		{
-			// build linked list
-			for( SLOT* s = freelist; s < &freelist[((sSysInfo.dwAllocationGranularity / sizeof(SLOT)) - 1)]; s = s->next = &s[1] );
+		if( page >= ( sSysInfo.dwAllocationGranularity / sSysInfo.dwPageSize ) )
+		{	// reserve another region
+			base = (BYTE*) VirtualAlloc( NULL, sSysInfo.dwAllocationGranularity, MEM_RESERVE, PAGE_NOACCESS );
+			page = 0;
 		}
-		else
+
+		// commit a page of the reserved region
+		if( base != NULL )
+		{
+			freelist = (SLOT*) VirtualAlloc( (void*)(((uintptr_t)base) + page * sSysInfo.dwPageSize), sSysInfo.dwPageSize, MEM_COMMIT, PAGE_READWRITE );
+			page++;
+			if( freelist != NULL )
+			{			
+				// build linked list of slots
+				for( SLOT* s = freelist; s < &freelist[((sSysInfo.dwPageSize / sizeof(SLOT)) - 1)]; s = s->next = &s[1] );
+				bResult = true;
+			}
+		}
+
+		if( bResult == false )
 		{
 			WARN( "Allocation FAILED" );
+			return NULL;
 		}
 	}
 
@@ -57,6 +77,7 @@ SLOT* AllocSlot()
 	freelist = freelist->next;
 	return slot;
 }
+
 
 // thread should already have lock
 inline void FreeSlot( SLOT* slot )
