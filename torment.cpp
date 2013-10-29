@@ -2,12 +2,17 @@
 #include <gl\gl.h>
 #define GL_UNSIGNED_SHORT_5_6_5           0x8363
 
+extern "C" { int _fltused=0; } // no crt so ... float support is questionable...
+
+void inline scale2x( void* void_dst, unsigned long dst_pitch, void* void_src, unsigned long src_pitch, unsigned long width, unsigned long height );
+
 HWND g_hWnd;
 DWORD g_dwWidth;
 DWORD g_dwHeight;
 HGLRC g_hRC = NULL;
 HDC g_hDC;
 WNDPROC g_fnWwndProc;
+GLuint g_Texture; 
 
 WRAP* primary;
 LPDIRECTDRAWSURFACE dds_secondary;
@@ -29,19 +34,16 @@ DWORD movie_height;
 Torment determines color depth for windowed mode using GDI32.GetDeviceCaps
 */
 
-
+struct CONFIG
+{
+	BOOL scale2x;
+	BOOL dd_scale;
+	BOOL xfog;
+} Config;
 
 typedef BOOL (__stdcall* SetProcessDPIAwareFunc)();
 typedef const char* (__stdcall* PFNWGLGETEXTENSIONSSTRINGEXTPROC)();
 typedef BOOL (__stdcall* PFNWGLSWAPINTERVALEXTPROC)(int interval);
-
-HRESULT DDFloodFill(IDirectDrawSurface* pdds, PRECT prc, COLORREF cr){
-	DDBLTFX effects;
-	RtlSecureZeroMemory( &effects, sizeof(effects) );
-	effects.dwSize = sizeof(effects);
-	effects.dwFillColor = cr;
-	return pdds->lpVtbl->Blt( pdds, prc, NULL, NULL, (DDBLT_COLORFILL | DDBLT_WAIT), &effects );
-}
 
 
 char* my_strstr ( const char* str, const char* sub_str ){
@@ -58,6 +60,24 @@ char* my_strstr ( const char* str, const char* sub_str ){
 		}
 	}
 	return 0; // not found
+}
+
+void GetConfig()
+{
+	char* szCmdLine = GetCommandLine();
+
+	Config.scale2x = my_strstr( szCmdLine, "-scale2x" ) ? TRUE : FALSE;
+	Config.dd_scale = my_strstr( szCmdLine, "-ovid" ) ? FALSE : TRUE;
+	Config.xfog = my_strstr( szCmdLine, "-ofog" ) ? FALSE : TRUE;
+}
+
+
+HRESULT DDFloodFill(IDirectDrawSurface* pdds, PRECT prc, COLORREF cr){
+	DDBLTFX effects;
+	RtlSecureZeroMemory( &effects, sizeof(effects) );
+	effects.dwSize = sizeof(effects);
+	effects.dwFillColor = cr;
+	return pdds->lpVtbl->Blt( pdds, prc, NULL, NULL, (DDBLT_COLORFILL | DDBLT_WAIT), &effects );
 }
 
 void SetupOpenGL()
@@ -80,37 +100,69 @@ void SetupOpenGL()
 	SetPixelFormat( g_hDC, ChoosePixelFormat( g_hDC, &pfd ), &pfd );
 	g_hRC = wglCreateContext( g_hDC );
 	wglMakeCurrent( g_hDC, g_hRC );
-
-	__asm 
-	{ // no float support... so push by hand
-		push 0xBF800000
-		push 0x3F800000
-		call DWORD PTR DS:[glPixelZoom] // glPixelZoom( 1.0, -1.0 ) // 0,0 is at top-left
-		push 0
-		push 0
-		push 0
-		push 0
-		call DWORD PTR DS:[glClearColor] // black
-	}
-	glRasterPos4i( -1, 1, 0, 1 ); // move cursor to top-left
-
-	glClear( GL_COLOR_BUFFER_BIT ); // colorfill with glClearColor
+	glClearColor( 0, 0, 0, 0 ); // black
+	glClear( GL_COLOR_BUFFER_BIT ); 
 	SwapBuffers( g_hDC );
-	glClear( GL_COLOR_BUFFER_BIT );
+	glViewport( 0, 0, (GLsizei)g_dwWidth, (GLsizei)g_dwHeight );
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho( 0, (double)g_dwWidth, (double)g_dwHeight, 0, -1, 1 );
+	glMatrixMode( GL_MODELVIEW );
+	glLoadIdentity();
+	glEnable( GL_TEXTURE_2D );
+	glDisable( GL_LIGHTING );
+    glDisable( GL_DITHER );
+    glDisable( GL_BLEND );
+    glDisable( GL_DEPTH_TEST );
+	glGenTextures( 1, &g_Texture );
+    glBindTexture( GL_TEXTURE_2D, g_Texture );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, g_dwWidth, g_dwHeight, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, 0 ); // NPOT
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+	glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
+	glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
 
 	// enable vsync
-	PFNWGLGETEXTENSIONSSTRINGEXTPROC wglGetExtensionsStringEXT = (PFNWGLGETEXTENSIONSSTRINGEXTPROC) wglGetProcAddress( "wglGetExtensionsStringEXT" );
-    if( (long)wglGetExtensionsStringEXT > 4 )
+	// WGL_EXT_swap_control
+	PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC) wglGetProcAddress( "wglSwapIntervalEXT" );
+	if( (long)wglSwapIntervalEXT > 4 )
 	{
-		if( my_strstr( wglGetExtensionsStringEXT(), "WGL_EXT_swap_control" ) != NULL )
+		wglSwapIntervalEXT( 1 );
+	}
+}
+
+HRESULT Flip_pst( LPDIRECTDRAWSURFACE lpDDS, LPDIRECTDRAWSURFACE lpDDSurfaceTargetOverride, DWORD dwFlags )
+{
+	HRESULT hResult;
+
+	if( lpDDS == primary->dds1 )
+	{
+		DDSURFACEDESC ddsd;
+		
+		glFinish();
+		lpDDS->lpVtbl->Unlock( lpDDS, NULL );
+		hResult = lpDDS->lpVtbl->Flip( lpDDS, lpDDSurfaceTargetOverride, dwFlags );
+		ddsd.dwSize = sizeof(ddsd);
+		if(SUCCEEDED( lpDDS->lpVtbl->Lock( lpDDS, NULL, &ddsd, DDLOCK_WAIT, NULL) ) )
 		{
-			PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC) wglGetProcAddress( "wglSwapIntervalEXT" );
-			if( (long)wglSwapIntervalEXT > 4 )
-			{
-				wglSwapIntervalEXT( 1 );
-			}
+			glTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, g_dwWidth, g_dwHeight, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, ddsd.lpSurface );
+
+			glBegin(GL_QUADS);
+				glTexCoord2i( 0, 0 ); glVertex2i( 0, 0 );
+				glTexCoord2i( 1, 0 ); glVertex2i( g_dwWidth, 0 );
+				glTexCoord2i( 1, 1 ); glVertex2i( g_dwWidth, g_dwHeight );
+				glTexCoord2i( 0, 1 ); glVertex2i( 0, g_dwHeight );
+			glEnd();
+			
+			SwapBuffers( g_hDC );
 		}
 	}
+	else
+	{
+		hResult = lpDDS->lpVtbl->Flip( lpDDS, lpDDSurfaceTargetOverride, dwFlags );
+	}
+	return hResult;
+
 }
 
 void GoFullScreen()
@@ -195,6 +247,9 @@ LRESULT __stdcall WindowProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 GUID* DirectDrawCreateDriver_pst( GUID* lpGUID )
 { 
+	// inti
+	GetConfig();
+
 	// DpiAware
 	HMODULE hUser32 = GetModuleHandle( "user32.dll" );
 	if( hUser32 )
@@ -258,32 +313,6 @@ HRESULT GetDisplayMode_pst( LPDIRECTDRAW lpDD, LPDDSURFACEDESC lpDDSurfaceDesc )
 	return hResult;
 }
 
-
-HRESULT Flip_pst( LPDIRECTDRAWSURFACE lpDDS, LPDIRECTDRAWSURFACE lpDDSurfaceTargetOverride, DWORD dwFlags )
-{
-	HRESULT hResult;
-
-	if( lpDDS == primary->dds1 )
-	{
-		DDSURFACEDESC ddsd;
-		
-		glFinish();
-		lpDDS->lpVtbl->Unlock( lpDDS, NULL );
-		hResult = lpDDS->lpVtbl->Flip( lpDDS, lpDDSurfaceTargetOverride, dwFlags );
-		ddsd.dwSize = sizeof(ddsd);
-		if(SUCCEEDED( lpDDS->lpVtbl->Lock( lpDDS, NULL, &ddsd, DDLOCK_WAIT, NULL) ) )
-		{
-			glDrawPixels( g_dwWidth, g_dwHeight, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, ddsd.lpSurface );
-		}
-		SwapBuffers( g_hDC );
-	}
-	else
-	{
-		hResult = lpDDS->lpVtbl->Flip( lpDDS, lpDDSurfaceTargetOverride, dwFlags );
-	}
-	return hResult;
-
-}
 
 HRESULT CreateSurface_pst( WRAP* This, LPDDSURFACEDESC lpDDSurfaceDesc, LPDIRECTDRAWSURFACE *lplpDDSurface, IUnknown *pUnkOuter ) 
 {
@@ -386,37 +415,40 @@ HRESULT CreateSurface_pst( WRAP* This, LPDDSURFACEDESC lpDDSurfaceDesc, LPDIRECT
 
 HRESULT BltFast_pst( WRAP* This, DWORD dwX, DWORD dwY, WRAP* src, LPRECT lpSrcRect, DWORD dwTrans ) 
 {
-	// postpone drawing fog...
-	// note: mirrored (bottom/right) items are marked in Blt()
-	long tile_index = ( This - tiles ) / sizeof( WRAP ); // the allocator *should* keep all these in order...
-	if( ( tile_index >= 0 ) && ( tile_index < 4800 ) ) // 80x60 grid of 64x64 px tiles 
+	if( Config.xfog != FALSE )
 	{
-		DWORD subsquare_shift = (dwX >> 2) + (dwY >> 1); // each tile is treated as 4 different 32x32 px squares...
-		if( ( src == fog ) && ( lpSrcRect->top == 32 ) && ( lpSrcRect->left == 32 ) )
-		{
-			fog_coverage[ tile_index ] |= ( 0x000000FF << subsquare_shift ); // darken square
-			return DD_OK;
-		}
-		if( ( src == fog2 ) && ( lpSrcRect != NULL ) )
-		{	
-			if( lpSrcRect->top != 0 )
-			{
-				if( lpSrcRect->left == 0 ) fog_coverage[ tile_index ] |= ( 0x0000001E << subsquare_shift ); // darken top left triangle 
-				else fog_coverage[ tile_index ] |= ( 0x00000087 << subsquare_shift ); // darken top right triangle
-			}
-			// else eat 32x16 rects 
-			return DD_OK;
-		}
-	}
-
-	// apply fog now.
-	if( This->dds1 == dds_secondary )
-	{
-		long tile_index = ( src - tiles ) / sizeof( WRAP ); // the allocator *should* keep all these in order...
+		// postpone drawing fog...
+		// note: mirrored (bottom/right) items are marked in Blt()
+		long tile_index = ( This - tiles ) / sizeof( WRAP ); // the allocator *should* keep all these in order...
 		if( ( tile_index >= 0 ) && ( tile_index < 4800 ) ) // 80x60 grid of 64x64 px tiles 
 		{
-			DrawFog( GetInnerInterface( ((LPDIRECTDRAWSURFACE)src) ), fog_coverage[tile_index] );
-			fog_coverage[tile_index] = 0;
+			DWORD subsquare_shift = (dwX >> 2) + (dwY >> 1); // each tile is treated as 4 different 32x32 px squares...
+			if( ( src == fog ) && ( lpSrcRect->top == 32 ) && ( lpSrcRect->left == 32 ) )
+			{
+				fog_coverage[ tile_index ] |= ( 0x000000FF << subsquare_shift ); // darken square
+				return DD_OK;
+			}
+			if( ( src == fog2 ) && ( lpSrcRect != NULL ) )
+			{	
+				if( lpSrcRect->top != 0 )
+				{
+					if( lpSrcRect->left == 0 ) fog_coverage[ tile_index ] |= ( 0x0000001E << subsquare_shift ); // darken top left triangle 
+					else fog_coverage[ tile_index ] |= ( 0x00000087 << subsquare_shift ); // darken top right triangle
+				}
+				// else eat 32x16 rects 
+				return DD_OK;
+			}
+		}
+
+		// apply fog now.
+		if( This->dds1 == dds_secondary )
+		{
+			long tile_index = ( src - tiles ) / sizeof( WRAP ); // the allocator *should* keep all these in order...
+			if( ( tile_index >= 0 ) && ( tile_index < 4800 ) ) // 80x60 grid of 64x64 px tiles 
+			{
+				DrawFog( GetInnerInterface( ((LPDIRECTDRAWSURFACE)src) ), fog_coverage[tile_index] );
+				fog_coverage[tile_index] = 0;
+			}
 		}
 	}
 
@@ -426,78 +458,132 @@ HRESULT BltFast_pst( WRAP* This, DWORD dwX, DWORD dwY, WRAP* src, LPRECT lpSrcRe
 HRESULT Blt_pst( WRAP* This, LPRECT lpDestRect, LPDIRECTDRAWSURFACE lpDDSrcSurface, LPRECT lpSrcRect, DWORD dwFlags, LPDDBLTFX lpDDBltFx )
 {
 	// postpone drawing fog...
-	// note: non-mirrored (top/left) items are marked in BltFast()
-	long tile_index = ( This - tiles ) / sizeof( WRAP ); // the allocator *should* keep all these in order...
-	if( ( tile_index >= 0 ) && ( tile_index < 4800 ) ) // 80x60 grid of 64x64 px tiles 
+	if( Config.xfog != FALSE )
 	{
-		if( ( lpDDSrcSurface == fog2->dds1 ) && ( lpSrcRect != NULL ) )
-		{	
-			if( lpSrcRect->top != 0 )
-			{
-				// each tile is treated as 4 different 32x32 px squares...
-				DWORD subsquare_shift = ( lpDestRect == NULL ) ? 0 : subsquare_shift = ( lpDestRect->left >> 2 ) + ( lpDestRect->top >> 1 );	
-				if( lpSrcRect->left == 0 ) fog_coverage[ tile_index ] |= ( 0x000000E1 << subsquare_shift ); // darken bottom right triangle
-				else fog_coverage[ tile_index ] |= ( 0x00000078 << subsquare_shift ); // darken bottom left triangle
+		// note: non-mirrored (top/left) items are marked in BltFast()
+		long tile_index = ( This - tiles ) / sizeof( WRAP ); // the allocator *should* keep all these in order...
+		if( ( tile_index >= 0 ) && ( tile_index < 4800 ) ) // 80x60 grid of 64x64 px tiles 
+		{
+			if( ( lpDDSrcSurface == fog2->dds1 ) && ( lpSrcRect != NULL ) )
+			{	
+				if( lpSrcRect->top != 0 )
+				{
+					// each tile is treated as 4 different 32x32 px squares...
+					DWORD subsquare_shift = ( lpDestRect == NULL ) ? 0 : subsquare_shift = ( lpDestRect->left >> 2 ) + ( lpDestRect->top >> 1 );	
+					if( lpSrcRect->left == 0 ) fog_coverage[ tile_index ] |= ( 0x000000E1 << subsquare_shift ); // darken bottom right triangle
+					else fog_coverage[ tile_index ] |= ( 0x00000078 << subsquare_shift ); // darken bottom left triangle
+				}
+				// else eat 32x16 rects 
+				return DD_OK;
 			}
-			// else eat 32x16 rects 
-			return DD_OK;
 		}
 	}
 
-	// stretch movies
-	if((This->dds1 == dds_secondary) && (movie != NULL) && (movie2 != NULL) && ((movie->dds1 == lpDDSrcSurface) || (movie2->dds1 == lpDDSrcSurface)))
+	//	
+	// stretch movies //
+	//
+	if( Config.scale2x != FALSE )
 	{
-
-		DWORD movie_width = lpSrcRect->right;
-		DWORD movie_height = lpSrcRect->bottom;
-		DWORD screen_width = g_dwWidth;
-		DWORD screen_height = g_dwHeight;
-		DWORD new_height;
-		DWORD new_width;
-		RECT rc_fill;
-		
-		// for compat with previous stretch movie patch
-		RECT rc_dst;
-		lpDestRect = &rc_dst;
-		//
-		
-		new_height = (movie_height * screen_width) / movie_width;
-		if( new_height > screen_height )
+		if( g_dwWidth >= 1280 )
 		{
-			new_width = (movie_width * screen_height) / movie_height;
-			lpDestRect->left = ((screen_width - new_width) >> 1);
-			lpDestRect->top = 0;
-			lpDestRect->right = lpDestRect->left + new_width;
-			lpDestRect->bottom = screen_height;
+			if((This->dds1 == dds_secondary) && (movie != NULL) && (movie2 != NULL) && ((movie->dds1 == lpDDSrcSurface) || (movie2->dds1 == lpDDSrcSurface)))
+			{
+				DDSURFACEDESC ddsd;
+				BYTE* dst;
+				DWORD dst_pitch;
+				BYTE* src;
+				DWORD src_pitch;
+				DWORD width;
+				DWORD height;
 
-			rc_fill.left   = 0;
-			rc_fill.top    = 0;
-			rc_fill.right  = lpDestRect->left;
-			rc_fill.bottom = screen_height;
-			DDFloodFill( dds_secondary, &rc_fill, 0 );
-			rc_fill.left   = lpDestRect->right;
-			rc_fill.top    = 0;
-			rc_fill.right  = screen_width;
-			rc_fill.bottom = screen_height;
-			DDFloodFill( dds_secondary, &rc_fill, 0 );
+				ddsd.dwSize = sizeof(ddsd);
+				if( SUCCEEDED( This->dds1->lpVtbl->Lock( This->dds1, NULL, &ddsd, DDLOCK_WAIT, NULL ) ) )
+				{
+					dst = (BYTE*)ddsd.lpSurface;
+					dst_pitch = ddsd.lPitch;
+					if( SUCCEEDED( lpDDSrcSurface->lpVtbl->Lock( lpDDSrcSurface, NULL, &ddsd, DDLOCK_WAIT, NULL ) ) )
+					{
+						src = (BYTE*)ddsd.lpSurface;
+						src_pitch = ddsd.lPitch;
+						width = lpSrcRect->right;
+						height = lpSrcRect->bottom; 
+						dst += ( g_dwWidth - 1280 ); // h-center
+						if( g_dwHeight >= ( height << 1 ) )
+						{ 
+							dst += ( dst_pitch * (( g_dwHeight - ( height * 2 )) >> 1 )); // v-center 
+						}
+						else
+						{ // clip src so it fits...
+							src += ( src_pitch * ( ( ( height - ( g_dwHeight >> 1 ) ) >> 1 ) ) );
+							height = g_dwHeight >> 1; 
+						}
+
+						// copy and enlarge
+						scale2x( dst, dst_pitch, src, src_pitch, width, height );
+
+						lpDDSrcSurface->lpVtbl->Unlock( lpDDSrcSurface, NULL );
+					}
+					This->dds1->lpVtbl->Unlock( This->dds1, NULL );
+				}
+				return DD_OK;
+			}
 		}
-		else 
+	}
+	if( Config.dd_scale != FALSE )
+	{
+		if((This->dds1 == dds_secondary) && (movie != NULL) && (movie2 != NULL) && ((movie->dds1 == lpDDSrcSurface) || (movie2->dds1 == lpDDSrcSurface)))
 		{
-			lpDestRect->left = 0;
-			lpDestRect->top = (( screen_height - new_height ) >> 1);
-			lpDestRect->right = screen_width;
-			lpDestRect->bottom = lpDestRect->top + new_height;
+			DWORD movie_width = lpSrcRect->right;
+			DWORD movie_height = lpSrcRect->bottom;
+			DWORD screen_width = g_dwWidth;
+			DWORD screen_height = g_dwHeight;
+			DWORD new_height;
+			DWORD new_width;
+			RECT rc_fill;
+			
+			// for compat with previous stretch movie patch
+			RECT rc_dst;
+			lpDestRect = &rc_dst;
+			//
+			
+			new_height = (movie_height * screen_width) / movie_width;
+			if( new_height > screen_height )
+			{
+				new_width = (movie_width * screen_height) / movie_height;
+				lpDestRect->left = ((screen_width - new_width) >> 1);
+				lpDestRect->top = 0;
+				lpDestRect->right = lpDestRect->left + new_width;
+				lpDestRect->bottom = screen_height;
 
-			rc_fill.left   = 0;
-			rc_fill.top    = 0;
-			rc_fill.right  = screen_width;
-			rc_fill.bottom = lpDestRect->top;
-			DDFloodFill( dds_secondary, &rc_fill, 0 );
-			rc_fill.left   = 0;
-			rc_fill.top    = lpDestRect->bottom;
-			rc_fill.right  = screen_width;
-			rc_fill.bottom = screen_height;
-			DDFloodFill( dds_secondary, &rc_fill, 0 );
+				rc_fill.left   = 0;
+				rc_fill.top    = 0;
+				rc_fill.right  = lpDestRect->left;
+				rc_fill.bottom = screen_height;
+				DDFloodFill( dds_secondary, &rc_fill, 0 );
+				rc_fill.left   = lpDestRect->right;
+				rc_fill.top    = 0;
+				rc_fill.right  = screen_width;
+				rc_fill.bottom = screen_height;
+				DDFloodFill( dds_secondary, &rc_fill, 0 );
+			}
+			else 
+			{
+				lpDestRect->left = 0;
+				lpDestRect->top = (( screen_height - new_height ) >> 1);
+				lpDestRect->right = screen_width;
+				lpDestRect->bottom = lpDestRect->top + new_height;
+
+				rc_fill.left   = 0;
+				rc_fill.top    = 0;
+				rc_fill.right  = screen_width;
+				rc_fill.bottom = lpDestRect->top;
+				DDFloodFill( dds_secondary, &rc_fill, 0 );
+				rc_fill.left   = 0;
+				rc_fill.top    = lpDestRect->bottom;
+				rc_fill.right  = screen_width;
+				rc_fill.bottom = screen_height;
+				DDFloodFill( dds_secondary, &rc_fill, 0 );
+			}
 		}
 	}
 

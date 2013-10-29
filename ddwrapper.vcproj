@@ -239,6 +239,10 @@
 			>
 		</File>
 		<File
+			RelativePath=".\scale2x_16_mmx.cpp"
+			>
+		</File>
+		<File
 			RelativePath=".\torment.cpp"
 			>
 		</File>
