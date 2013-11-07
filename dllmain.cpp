@@ -53,10 +53,12 @@ GetDDSurfaceLocal_t				pGetDDSurfaceLocal;
 GetSurfaceFromDC_t				pGetSurfaceFromDC;
 RegisterSpecialCase_t			pRegisterSpecialCase;
 
+#pragma warning( disable: 4996 )  // strcat is unsafe
 #pragma intrinsic( strcat )
 BOOL __stdcall DllEntryPoint( HINSTANCE hDll, DWORD dwReason, LPVOID lpvReserved )
 {
 	PROLOGUE;
+	UNREFERENCED_PARAMETER( lpvReserved );
 	switch(dwReason)
 	{
 	case DLL_PROCESS_ATTACH: 
@@ -68,6 +70,7 @@ BOOL __stdcall DllEntryPoint( HINSTANCE hDll, DWORD dwReason, LPVOID lpvReserved
 			if( GetSystemDirectory( szPath, MAX_PATH - 10 ))
 			{
 				strcat( szPath, "\\ddraw.dll" );
+				TRACE( szPath );
 				hRealDDraw = LoadLibrary( szPath );
 				if( hRealDDraw == hDll ) // this dll is NOT the real dll...
 				{
@@ -105,12 +108,13 @@ BOOL __stdcall DllEntryPoint( HINSTANCE hDll, DWORD dwReason, LPVOID lpvReserved
 	case DLL_THREAD_DETACH:
 		break;
 	case DLL_PROCESS_DETACH:
+		TRACE( "DLL_PROCESS_DETACH" );
 		FreeLibrary( hRealDDraw );
 		break;
 	}
 	EPILOGUE( TRUE );
 }
-
+#pragma warning( default: 4996 )
 
 typedef HRESULT (__stdcall* DirectDrawCreate_t)( GUID*, LPDIRECTDRAW*, IUnknown* );
 HRESULT __stdcall DirectDrawCreate( GUID* lpGUID, LPDIRECTDRAW* lplpDD, IUnknown* pUnkOuter )
@@ -353,7 +357,7 @@ HRESULT __stdcall DDGetAttachedSurfaceLcl( DWORD arg1, DWORD arg2, DWORD arg3 )
 DWORD __stdcall DDInternalLock( DWORD arg1, DWORD arg2 )
 { 
 	PROLOGUE;
-	DWORD dwResult = -1;
+	DWORD dwResult = 0xFFFFFFFF;
 	if( pDDInternalLock != NULL )
 	{
 		dwResult = pDDInternalLock( arg1, arg2 );
@@ -365,7 +369,7 @@ DWORD __stdcall DDInternalLock( DWORD arg1, DWORD arg2 )
 DWORD __stdcall DDInternalUnlock( DWORD arg1 )
 {
 	PROLOGUE;
-	DWORD dwResult = -1;
+	DWORD dwResult = 0xFFFFFFFF;
 	if( pDDInternalUnlock != NULL )
 	{
 		dwResult = pDDInternalUnlock( arg1 );

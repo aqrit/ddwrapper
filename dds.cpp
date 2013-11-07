@@ -140,6 +140,10 @@ namespace dds
 	HRESULT __stdcall BltBatch( WRAP* This, LPDDBLTBATCH lpDDBltBatch, DWORD dwCount, DWORD dwFlags ) 
 	{	// This method was never implemented by ddraw?
 		PROLOGUE;
+		UNREFERENCED_PARAMETER( This );
+		UNREFERENCED_PARAMETER( lpDDBltBatch );
+		UNREFERENCED_PARAMETER( dwCount );
+		UNREFERENCED_PARAMETER( dwFlags );
 		WARN( "E_NOTIMPL" );
 		EPILOGUE( E_NOTIMPL );  
 	}

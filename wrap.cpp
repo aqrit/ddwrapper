@@ -1,22 +1,20 @@
 #include "header.h"
 
-WRAP* buckets[1024]; // unordered hash map
-SLOT* freelist = NULL; // linked list of pre-allocated memory slots 
-CRITICAL_SECTION cs;
 SYSTEM_INFO sSysInfo;
-
-
-// determine bucket index ( 1024 buckets ) for this key (16 byte aligned interface address)
-#define HASHER( key ) ((((uintptr_t)key ) >> 2 ) & 0x3FF )
+WRAP* wrap_list;
+WRAP* wrap_freelist;
+DD_LIFETIME* ddlt_list;
+DD_LIFETIME* ddlt_freelist;
+CRITICAL_SECTION cs;
 
 
 const void* iid_to_vtbl( const GUID& riid )
 {
+	TRACE( ">" );
+	LOG_GUID( riid );
 	const void* xVtbl;
-
 	if      ( riid == IID_IUnknown                ) xVtbl = &unknwn::xVtbl;
 	else if ( riid == IID_IClassFactory           ) xVtbl = &classfactory::xVtbl;
-	// IID_IDirectDrawClassFactory
 	else if ( riid == IID_IDirectDraw             ) xVtbl = &dd::xVtbl1;
 	else if	( riid == IID_IDirectDraw2            ) xVtbl = &dd::xVtbl2;
 	else if	( riid == IID_IDirectDraw4            ) xVtbl = &dd::xVtbl4;
@@ -31,60 +29,51 @@ const void* iid_to_vtbl( const GUID& riid )
 	else if ( riid == IID_IDirectDrawColorControl ) xVtbl = &color::xVtbl;
 	else if ( riid == IID_IDirectDrawGammaControl ) xVtbl = &gamma::xVtbl;
 	else xVtbl = NULL;
-
 	return xVtbl;
 }
 
-
-// thread should already have lock
-SLOT* AllocSlot()
+// simple way to get small amounts of memory on demand...
+// will not span page boundries
+// will not consider alignment
+// allocated memory can not be freed
+// not thread safe
+void* micro_alloc( int size )
 {
-	static void* base = NULL;
-	static unsigned int page = -1;
+	TRACE( ">" );
+	static BYTE* end_region = 0; 
+	static BYTE* end_page = 0; 
+	static BYTE* alloc_ptr = 0;
 
-	bool bResult = false;
-	
-	if( freelist == NULL ) // if out of slots
+	if( ( alloc_ptr + size ) >= end_page ) 
 	{
-		if( page >= ( sSysInfo.dwAllocationGranularity / sSysInfo.dwPageSize ) )
-		{	// reserve another region
-			base = (BYTE*) VirtualAlloc( NULL, sSysInfo.dwAllocationGranularity, MEM_RESERVE, PAGE_NOACCESS );
-			page = 0;
+		alloc_ptr = end_page;
+
+		if( alloc_ptr == end_region )
+		{	
+			TRACE( "reserve a new memory region" );
+			alloc_ptr = (BYTE*) VirtualAlloc( NULL, sSysInfo.dwAllocationGranularity, MEM_RESERVE, PAGE_NOACCESS );
+			end_region = alloc_ptr + sSysInfo.dwAllocationGranularity;
 		}
 
-		// commit a page of the reserved region
-		if( base != NULL )
-		{
-			freelist = (SLOT*) VirtualAlloc( (void*)(((uintptr_t)base) + page * sSysInfo.dwPageSize), sSysInfo.dwPageSize, MEM_COMMIT, PAGE_READWRITE );
-			page++;
-			if( freelist != NULL )
-			{			
-				// build linked list of slots
-				for( SLOT* s = freelist; s < &freelist[((sSysInfo.dwPageSize / sizeof(SLOT)) - 1)]; s = s->next = &s[1] );
-				bResult = true;
-			}
+		if( alloc_ptr != NULL )
+		{ 
+			TRACE( "commit a page of the reserved region" );
+			alloc_ptr = (BYTE*) VirtualAlloc( alloc_ptr, sSysInfo.dwPageSize, MEM_COMMIT, PAGE_READWRITE );
+			end_page = alloc_ptr + sSysInfo.dwPageSize;
 		}
 
-		if( bResult == false )
+		if( alloc_ptr == NULL )
 		{
 			WARN( "Allocation FAILED" );
-			return NULL;
+			end_region = 0; 
+			end_page = 0; 
 		}
 	}
 
-	// pop slot
-	SLOT* slot = freelist;
-	freelist = freelist->next;
-	return slot;
-}
-
-
-// thread should already have lock
-inline void FreeSlot( SLOT* slot )
-{
-	// push
-	slot->next = freelist;
-	freelist = slot;
+	// "bump the pointer"
+	void* p = alloc_ptr;
+	alloc_ptr += size;
+	return p;
 }
 
 
@@ -92,8 +81,8 @@ inline void FreeSlot( SLOT* slot )
 // returns true if a new wrapper is created
 bool Wrap( DD_LIFETIME* dd_parent, const void* xVtbl, void** ppvInterface )
 {
+	TRACE( ">" );
 	WRAP* w;
-	WRAP* list;
 	bool bNew = false;
 
 	// validate args
@@ -102,51 +91,71 @@ bool Wrap( DD_LIFETIME* dd_parent, const void* xVtbl, void** ppvInterface )
 		EnterCriticalSection( &cs );
 
 		// search list
-		list = buckets[ HASHER( *ppvInterface ) ];
-		for( w = list; (w != NULL ) && (w->inner_iface != *ppvInterface); w = w->next );	
-
-		if( w != NULL ) // if existing wrapper is found 
+		for( w = wrap_list; ( w != NULL ) && ( w->inner_iface != *ppvInterface ); w = w->next );	
+		if( w != NULL )
 		{
+			TRACE( "found existing wrapper" );
 			if( w->xVtbl != xVtbl ){ WARN("existing wrapper is for a different type"); }
 			*((WRAP**)ppvInterface) = w;
 		}
-		else // no wrapper found so create
+		else 
 		{
-			w = (WRAP*) AllocSlot();
+			TRACE( "creating new wrapper" );
+			if( wrap_freelist != NULL )
+			{
+				// pop
+				w = wrap_freelist; 
+				wrap_freelist = w->next;
+			}
+			else
+			{
+				w = (WRAP*) micro_alloc( sizeof( WRAP ) );
+			}
 			if( w != NULL )
 			{
-				// dd lifetime tracker //
-				if( ( xVtbl == &dd::xVtbl1 ) || ( xVtbl == &dd::xVtbl2 ) || ( xVtbl == &dd::xVtbl4 ) || ( xVtbl == &dd::xVtbl7 ) )
+
+				// dd obj lifetime tracker //
+				if( ( dd_parent != NULL ))
 				{
-					if( dd_parent != NULL )
+					if( ( ( xVtbl == &unknwn::xVtbl ) && ( dd_parent->obj == ((IUnknown*)(*ppvInterface)) ) ) || 
+					( ( xVtbl == &dd::xVtbl1 ) || ( xVtbl == &dd::xVtbl2 ) || ( xVtbl == &dd::xVtbl4 ) || ( xVtbl == &dd::xVtbl7 ) ) ) 
 					{
+						TRACE( "new interface of existing dd obj" );
 						dd_parent->iface_cnt++;
 					}
-					else
-					{
-						dd_parent = (DD_LIFETIME*) AllocSlot();
+				}
+				else
+				{	
+					if( ( xVtbl == &dd::xVtbl1 ) || ( xVtbl == &dd::xVtbl2 ) || ( xVtbl == &dd::xVtbl4 ) || ( xVtbl == &dd::xVtbl7 ) )
+					{	
+						TRACE( "new dd obj" );
+						if( ddlt_freelist != NULL )
+						{
+							// pop
+							dd_parent = ddlt_freelist; 
+							ddlt_freelist = dd_parent->next;
+						}
+						else
+						{
+							dd_parent = (DD_LIFETIME*) micro_alloc( sizeof( DD_LIFETIME ) );
+						}
 						if( dd_parent != NULL )
 						{
 							((IUnknown*)(*ppvInterface))->lpVtbl->QueryInterface( ((IUnknown*)(*ppvInterface)), IID_IUnknown, (void**)&dd_parent->obj );
 							dd_parent->obj->lpVtbl->Release( dd_parent->obj );
 							dd_parent->iface_cnt = 1;
+							dd_parent->next = ddlt_list;
+							ddlt_list = dd_parent; // push
 						}
 					}
 				}
-				else
-				{
-					if( ( dd_parent != NULL ) && ( dd_parent->obj == ((IUnknown*)(*ppvInterface))) )
-					{
-						dd_parent->iface_cnt++;
-					}
-				}
-	
+
 				// construct
 				w->xVtbl = xVtbl;
 				w->inner_iface = *ppvInterface;
 				w->dd_parent = dd_parent;		
-				w->next = list; 
-				list = w; // push
+				w->next = wrap_list; 
+				wrap_list = w; // push
 				*((WRAP**)ppvInterface) = w; // hook it !
 				bNew = true;
 			}
@@ -159,54 +168,82 @@ bool Wrap( DD_LIFETIME* dd_parent, const void* xVtbl, void** ppvInterface )
 
 ULONG WrapRelease( WRAP* This )
 {
+	TRACE( ">" );
 	EnterCriticalSection( &cs );
 	ULONG dwCount = This->unknwn->lpVtbl->Release( This->unknwn );
 	if( dwCount == 0 )
 	{
-		// find proceeding link in unordered_map //
-		WRAP* list = buckets[ HASHER( This->inner_iface ) ];
+		TRACE( "interface destroyed" );
+		WRAP* w = wrap_list;
 		WRAP* prev = NULL;
-		WRAP* wrap;
-		for( wrap = list; ( wrap != NULL ) && ( wrap != This ); wrap = wrap->next ) prev = wrap;
-		if( wrap != NULL )
-		{
-			// remove this wrapper from the buckets
-			if( prev != NULL ) prev->next = wrap->next;
-			else list = wrap->next; 
+		DD_LIFETIME* dd_parent = This->dd_parent;
 
-			// dd lifetime tracker //
-			if( ( ( wrap->dd_parent != NULL ) && (wrap->unknwn == wrap->dd_parent->obj ) ) ||
-			( ( wrap->xVtbl == &dd::xVtbl1 ) || ( wrap->xVtbl == &dd::xVtbl2 ) || ( wrap->xVtbl == &dd::xVtbl4 ) || ( wrap->xVtbl == &dd::xVtbl7 ) ) )
+		// if dd interface was destroyed
+		if( ( dd_parent != NULL ) &&
+			( (( This->xVtbl == &unknwn::xVtbl ) && ( This->unknwn == dd_parent->obj )) ||
+			( This->xVtbl == &dd::xVtbl1 ) || ( This->xVtbl == &dd::xVtbl2 ) ||
+			( This->xVtbl == &dd::xVtbl4 ) || ( This->xVtbl == &dd::xVtbl7 ) ) )
+		{
+			dd_parent->iface_cnt--;
+			if( dd_parent->iface_cnt == 0 ) 
 			{
-				if( wrap->dd_parent->iface_cnt-- == 0 )
+				TRACE( "dd obj destroyed" );
+				// destroy ALL wraps that have a matching dd_parent
+				while( w != NULL )
 				{
-					// destroy all wraps that have a matching dd_parent
-					for( int i = 0; i < _countof( buckets ); i++ )
+					if( w->dd_parent == dd_parent ) // if match
 					{
-						WRAP* next;
-						prev = NULL;
-						for( WRAP* w = buckets[i]; w != NULL; w = next )
+						TRACE( "destroyed child\n" );
+						// move to freelist
+						if( prev != NULL )
 						{
-							next = w->next;
-							if( w->dd_parent == wrap->dd_parent )
-							{
-								if( prev != NULL ) prev->next = next;
-								else buckets[i] = next;
-								FreeSlot( (SLOT*) w );
-							}
-							else
-							{
-								prev = w; 
-							}
+							prev->next = w->next;
+							w->next = wrap_freelist;
+							wrap_freelist = w; // push
+							w = prev->next; // continue
+						}
+						else 
+						{
+							wrap_list = w->next;
+							w->next = wrap_freelist;
+							wrap_freelist = w; // push
+							w = wrap_list; // continue
 						}
 					}
-					FreeSlot( (SLOT*) wrap->dd_parent );
+					else // else continue search
+					{ 
+						prev = w;
+						w = w->next;
+					}
+				}
+	
+				// move dd_parent to the freelist
+				DD_LIFETIME* d_prev = NULL;
+				DD_LIFETIME* d;
+				for( d = ddlt_list; ( d != NULL ) && ( d != dd_parent ); d = d->next ) d_prev = d; // find previons link
+				if( d == NULL ){ WARN( "wrap not in list" ); }
+				else
+				{
+					if( d_prev != NULL ) d_prev->next = d->next;
+					else ddlt_list = d->next;
+					d->next = ddlt_freelist;
+					ddlt_freelist = d;
 				}
 			}
-			// free wrap
-			FreeSlot( (SLOT*) wrap );
 		}
-		else WARN( "wrap not in list" );
+		else
+		{
+			// move This to the freelist
+			for( w = wrap_list; ( w != NULL ) && ( w != This ); w = w->next ) prev = w; // find previons link
+			if( w == NULL ){ WARN( "wrap not in list" ); }
+			else
+			{
+				if( prev != NULL ) prev->next = w->next;
+				else wrap_list = w->next;
+				w->next = wrap_freelist;
+				wrap_freelist = w;
+			}
+		}
 	}
 	LeaveCriticalSection( &cs );
 	return dwCount;
@@ -215,10 +252,12 @@ ULONG WrapRelease( WRAP* This )
 
 HRESULT __stdcall WrapEnumSurfacesCallback( LPDIRECTDRAWSURFACE lpDDSurface, LPDDSURFACEDESC lpDDSurfaceDesc, LPVOID lpContext )
 {
+	PROLOGUE;
 	EnumStruct* e = (EnumStruct*)lpContext;
 	bool bNew = Wrap( e->dd_parent, e->xVtbl, (void**)&lpDDSurface );
 	if( ( bNew != false ) && ( e->must_exist != false ) ){ WARN( "interface was not wrapped" ); }
-	return ((LPDDENUMSURFACESCALLBACK) e->callback)( lpDDSurface, lpDDSurfaceDesc, e->context );
+	HRESULT hResult = ((LPDDENUMSURFACESCALLBACK) e->callback)( lpDDSurface, lpDDSurfaceDesc, e->context );
+	EPILOGUE( hResult );
 }
 
 
@@ -227,6 +266,7 @@ HRESULT __stdcall WrapEnumSurfacesCallback( LPDIRECTDRAWSURFACE lpDDSurface, LPD
 // ... so a little extra work is needed to distinguish between different versions //
 const void* dd_to_dds_vtbl( WRAP* This )
 {
+	TRACE( ">" );
 	if( This->xVtbl == &dd::xVtbl7 ) return &dds::xVtbl7;
 	else if( This->xVtbl == &dd::xVtbl4 ) return &dds::xVtbl4;
 	return &dds::xVtbl1;
@@ -234,6 +274,7 @@ const void* dd_to_dds_vtbl( WRAP* This )
 
 const void* dds_to_dd_vtbl( WRAP* This )
 {
+	TRACE( ">" );
 	if( This->xVtbl == &dds::xVtbl7 ) return &dd::xVtbl7;
 	else if( This->xVtbl == &dds::xVtbl4 ) return &dd::xVtbl4;
 	return &dd::xVtbl2;
@@ -243,6 +284,7 @@ const void* dds_to_dd_vtbl( WRAP* This )
 // There are no guarantees that an interface passed as argument is wrapped or not NULL //
 IDirectDraw* GetInnerInterface( IDirectDraw* iface )
 {
+	TRACE( "dd" );
 	if( iface != NULL )
 	{
 		if( ( ((WRAP*)iface)->xVtbl == &dd::xVtbl1 ) ||
@@ -259,6 +301,7 @@ IDirectDraw* GetInnerInterface( IDirectDraw* iface )
 
 IDirectDrawSurface* GetInnerInterface( IDirectDrawSurface* iface )
 {
+	TRACE( "dds" );
 	if( iface != NULL )
 	{
 		if( ( ((WRAP*)iface)->xVtbl == &dds::xVtbl1 ) ||
@@ -276,6 +319,7 @@ IDirectDrawSurface* GetInnerInterface( IDirectDrawSurface* iface )
 
 IDirectDrawClipper* GetInnerInterface( IDirectDrawClipper* iface )
 {
+	TRACE( "clip" );
 	if( iface != NULL )
 	{
 		if( ((WRAP*)iface)->xVtbl == &clipper::xVtbl )
@@ -289,6 +333,7 @@ IDirectDrawClipper* GetInnerInterface( IDirectDrawClipper* iface )
 
 IDirectDrawPalette* GetInnerInterface( IDirectDrawPalette* iface )
 {
+	TRACE( "pal" );
 	if( iface != NULL )
 	{
 		if( ((WRAP*)iface)->xVtbl == &palette::xVtbl )

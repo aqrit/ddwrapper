@@ -1,11 +1,14 @@
 #pragma once
 
-
-// *approximate* when an dd object is destroyed by tracking interface creation and destruction
+// when a dd object is destroyed all children are also destroyed ( surfaces, etc. )
+// we've got no good way to known if an dd obj is destroyed
+// a dd obj is destroyed when it has no active interfaces... 
+// a dd object can have many interfaces at once... IDirectDraw, IDirectDraw2, IDirectDraw4, IDirectDraw7 and IUnknown
 struct DD_LIFETIME
 {
 	IUnknown* obj;
 	unsigned long iface_cnt; 
+	DD_LIFETIME* next;
 };
 
 struct WRAP
@@ -35,19 +38,6 @@ struct WRAP
 };
 
 
-// SLOT must be smaller than sSysInfo.dwPageSize
-struct SLOT
-{
-	union
-	{
-		SLOT* next;
-		WRAP wrap;
-		DD_LIFETIME dd_parent;
-	};
-};
-
-
-
 struct EnumStruct
 {
 	const void* xVtbl;
@@ -71,3 +61,5 @@ IDirectDraw*        GetInnerInterface( IDirectDraw* iface );
 IDirectDrawSurface* GetInnerInterface( IDirectDrawSurface* iface );
 IDirectDrawClipper* GetInnerInterface( IDirectDrawClipper* iface );
 IDirectDrawPalette* GetInnerInterface( IDirectDrawPalette* iface );
+
+
