@@ -1,8 +1,10 @@
-#define INITGUID
-#define CINTERFACE 
-#include <ddraw.h>
-#include <d3d.h>
-#include <dvp.h>
+#include "header.h"
+
+// defines from <dvp.h>
+DEFINE_GUID( _IID_IDDVideoPortContainer, 0x6C142760,0xA733,0x11CE,0xA5,0x21,0x00,0x20,0xAF,0x0B,0xE5,0x60 );
+DEFINE_GUID( _IID_IDirectDrawVideoPort, 0xB36D93E0,0x2B43,0x11CF,0xA2,0xDE,0x00,0xAA,0x00,0xB9,0x33,0x56 );
+DEFINE_GUID( _IID_IDirectDrawVideoPortNotify, 0xA655FB94,0x0589,0x4E57,0xB3,0x33,0x56,0x7A,0x89,0x46,0x8C,0x88);
+ 
 
 HANDLE file = INVALID_HANDLE_VALUE; 
 CRITICAL_SECTION log_lock;
@@ -230,9 +232,9 @@ void LogGUID(const GUID& riid)
 	else if ( riid == IID_IDirectDrawPalette         ) Log( "IID_IDirectDrawPalette\r\n"         );
 	
 	// unsupported //
-	else if ( riid == IID_IDDVideoPortContainer      ) Log( "IID_IDDVideoPortContainer\r\n"      );
-	else if ( riid == IID_IDirectDrawVideoPort       ) Log( "IID_IDirectDrawVideoPort\r\n"       );
-	else if ( riid == IID_IDirectDrawVideoPortNotify ) Log( "IID_IDirectDrawVideoPortNotify\r\n" );
+	else if ( riid == _IID_IDDVideoPortContainer      ) Log( "IID_IDDVideoPortContainer\r\n"      );
+	else if ( riid == _IID_IDirectDrawVideoPort       ) Log( "IID_IDirectDrawVideoPort\r\n"       );
+	else if ( riid == _IID_IDirectDrawVideoPortNotify ) Log( "IID_IDirectDrawVideoPortNotify\r\n" );
 	else if ( riid == IID_IDirect3D                  ) Log( "IID_IDirect3D\r\n" );
 	else if ( riid == IID_IDirect3D2                 ) Log( "IID_IDirect3D2\r\n" );
 	else if ( riid == IID_IDirect3D3                 ) Log( "IID_IDirect3D3\r\n" );

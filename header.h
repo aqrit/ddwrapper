@@ -7,7 +7,6 @@
 #include <guiddef.h>
 #include <ddraw.h>
 #include <d3d.h>
-#include <dvp.h>
 
 #include "wrap.h"
 #include "log.h"
