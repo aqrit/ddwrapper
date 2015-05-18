@@ -230,6 +230,8 @@ void LogGUID(const GUID& riid)
 	else if ( riid == IID_IDirectDrawSurface7        ) Log( "IID_IDirectDrawSurface7\r\n"        );
 	else if ( riid == IID_IDirectDrawClipper         ) Log( "IID_IDirectDrawClipper\r\n"         );
 	else if ( riid == IID_IDirectDrawPalette         ) Log( "IID_IDirectDrawPalette\r\n"         );
+	else if ( riid == IID_IDirectDrawColorControl    ) Log( "IID_IDirectDrawColorControl\r\n"    );
+	else if ( riid == IID_IDirectDrawGammaControl    ) Log( "IID_IDirectDrawGammaControl\r\n"    );
 	
 	// unsupported //
 	else if ( riid == _IID_IDDVideoPortContainer      ) Log( "IID_IDDVideoPortContainer\r\n"      );
