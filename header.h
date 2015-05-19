@@ -6,7 +6,7 @@
 #include <windows.h>
 #include <guiddef.h>
 #include <ddraw.h>
-#include <d3d.h>
+#include "wine/d3d.h"
 
 #include "wrap.h"
 #include "log.h"
