@@ -365,10 +365,12 @@ namespace dds
 		EPILOGUE( hResult );
 	}
 
-    HRESULT __stdcall Unlock( WRAP* This, LPVOID lpRect ) 
+	// lpData is ddsd.lpSurface in version 1, 2, and 3
+	// lpData is lpRect in versions 4 and 7
+    HRESULT __stdcall Unlock( WRAP* This, LPVOID lpData ) 
 	{ 
 		PROLOGUE;
-		HRESULT hResult = This->dds1->lpVtbl->Unlock( This->dds1, lpRect ); 
+		HRESULT hResult = This->dds1->lpVtbl->Unlock( This->dds1, lpData ); 
 		EPILOGUE( hResult );
 	}
 
